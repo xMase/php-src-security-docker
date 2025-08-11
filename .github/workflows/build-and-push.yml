@@ -9,56 +9,91 @@ on:
     - cron: "0 */6 * * *"
   workflow_dispatch:
 
+concurrency:
+  group: build-and-push-${{ github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
-  build-and-push:
+  prepare:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      skip_build: ${{ steps.compare.outputs.skip_build }}
+      dirs: ${{ steps.scan_dirs.outputs.dirs }}
+      commit_hash: ${{ steps.upstream.outputs.commit_hash }}
     env:
       UPSTREAM_REPO: remicollet/php-src-security
     steps:
-      - name: Checkout this repository
-      - name: Build and push images for each directory
-        run: |
-          for dir in apache cli fpm zts; do
-            if [ -f "$dir/Dockerfile" ]; then
-              echo "Building $dir..."
-              docker buildx build \
-                --file "$dir/Dockerfile" \
-                --platform linux/amd64,linux/arm64 \
-                --push \
-                --tag "${{ secrets.DOCKER_USERNAME }}/php-src-security-docker:${{ steps.get_branch.outputs.branch_name }}-$dir" \
-                "$dir"
-            else
-              echo "Skipping $dir (no Dockerfile)"
-            fi
-          done
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest upstream commit for this branch
         id: upstream
+        shell: bash
         run: |
-          git ls-remote https://github.com/${{ env.UPSTREAM_REPO }} ${{ steps.get_branch.outputs.branch_name }} | awk '{print $1}' > upstream_commit.txt
-          echo "commit_hash=$(cat upstream_commit.txt)" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          BRANCH="${{ github.ref_name }}"
+          echo "Branch: $BRANCH"
+          COMMIT=$(git ls-remote --heads "https://github.com/${UPSTREAM_REPO}.git" "$BRANCH" | awk '{print $1}')
+          if [ -z "$COMMIT" ]; then
+            echo "Upstream branch not found; using 'none'"
+            COMMIT="none"
+          fi
+          echo "$COMMIT" > upstream_commit.txt
+          echo "commit_hash=$COMMIT" >> "$GITHUB_OUTPUT"
 
       - name: Compare with last built commit
         id: compare
+        shell: bash
         run: |
+          set -euo pipefail
+          LAST_COMMIT="none"
           if [ -f .last_upstream_commit ]; then
             LAST_COMMIT=$(cat .last_upstream_commit)
-          else
-            LAST_COMMIT="none"
           fi
           UPSTREAM_COMMIT=$(cat upstream_commit.txt)
-          echo "last_commit=$LAST_COMMIT" >> $GITHUB_OUTPUT
-          echo "upstream_commit=$UPSTREAM_COMMIT" >> $GITHUB_OUTPUT
-          if [ "$LAST_COMMIT" = "$UPSTREAM_COMMIT" ]; then
-            echo "No new upstream commit. Skipping build."
-            echo "skip_build=true" >> $GITHUB_OUTPUT
+          echo "last_commit=$LAST_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "upstream_commit=$UPSTREAM_COMMIT" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$LAST_COMMIT" = "$UPSTREAM_COMMIT" ]; then
+            echo "skip_build=true" >> "$GITHUB_OUTPUT"
+            echo "No upstream changes detected; skipping build for scheduled run."
           else
-            echo "New upstream commit detected."
-            echo "skip_build=false" >> $GITHUB_OUTPUT
+            echo "skip_build=false" >> "$GITHUB_OUTPUT"
+            echo "Proceeding with build."
           fi
 
-      - name: Stop if no new upstream commit (only for schedule)
-        if: github.event_name == 'schedule' && steps.compare.outputs.skip_build == 'true'
-        run: exit 0
+      - name: Scan for build directories
+        id: scan_dirs
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIRS_JSON=$(ls -d */ 2>/dev/null | sed 's#/##' | while read -r d; do
+            if [ -f "$d/Dockerfile" ]; then printf '"%s",' "$d"; fi
+          done | sed 's/,$//')
+          if [ -z "$DIRS_JSON" ]; then
+            DIRS_JSON="[]"
+          else
+            DIRS_JSON="[$DIRS_JSON]"
+          fi
+          echo "dirs=$DIRS_JSON" >> "$GITHUB_OUTPUT"
+          echo "Found build directories: $DIRS_JSON"
 
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.skip_build != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      IMAGE_REPO: ${{ secrets.DOCKER_USERNAME }}/php-src-security-docker
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: ${{ fromJson(needs.prepare.outputs.dirs) }}
+    steps:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -71,34 +106,34 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push
+      - name: Build and push ${{ matrix.dir }}
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./Dockerfile
+          context: ${{ matrix.dir }}
+          file: ${{ matrix.dir }}/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/php-src-security-docker:${{ steps.get_branch.outputs.branch_name }}
+          tags: ${{ env.IMAGE_REPO }}:${{ github.ref_name }}-${{ matrix.dir }}
+
+  finalize:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.skip_build != 'true' && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Save latest upstream commit hash
-        if: github.event_name == 'schedule' && steps.compare.outputs.skip_build == 'false'
+        shell: bash
         run: |
-          cat upstream_commit.txt > .last_upstream_commit
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
+          set -euo pipefail
+          echo "${{ needs.prepare.outputs.commit_hash }}" > .last_upstream_commit
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
           git add .last_upstream_commit
-              - name: Scan for build directories
-                id: scan_dirs
-                run: |
-                  echo "dirs=$(ls -d apache cli fpm zts 2>/dev/null | tr '\n' ' ')" >> $GITHUB_OUTPUT
-              - name: Build and push images for each directory
-                uses: docker/build-push-action@v5
-                with:
-                  context: ${{ matrix.dir }}
-                  file: ${{ matrix.dir }}/Dockerfile
-                  platforms: linux/amd64,linux/arm64
-                  push: true
-                  tags: ${{ secrets.DOCKER_USERNAME }}/php-src-security-docker:${{ steps.get_branch.outputs.branch_name }}-${{ matrix.dir }}
-                strategy:
-                  matrix:
-                    dir: ${{ fromJson(steps.scan_dirs.outputs.dirs) }}
+          git commit -m "chore(ci): update last upstream commit to ${{ needs.prepare.outputs.commit_hash }}" || true
+          git push
