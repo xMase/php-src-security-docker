@@ -80,5 +80,18 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
           git add .last_upstream_commit
-          git commit -m "Update last upstream commit hash [skip ci]" || echo "No changes to commit."
-          git push
+              - name: Scan for build directories
+                id: scan_dirs
+                run: |
+                  echo "dirs=$(ls -d apache cli fpm zts 2>/dev/null | tr '\n' ' ')" >> $GITHUB_OUTPUT
+              - name: Build and push images for each directory
+                uses: docker/build-push-action@v5
+                with:
+                  context: ${{ matrix.dir }}
+                  file: ${{ matrix.dir }}/Dockerfile
+                  platforms: linux/amd64,linux/arm64
+                  push: true
+                  tags: ${{ secrets.DOCKER_USERNAME }}/php-src-security-docker:${{ steps.get_branch.outputs.branch_name }}-${{ matrix.dir }}
+                strategy:
+                  matrix:
+                    dir: ${{ fromJson(steps.scan_dirs.outputs.dirs) }}
