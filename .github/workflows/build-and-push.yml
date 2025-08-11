@@ -116,6 +116,8 @@ jobs:
           file: ${{ matrix.dir }}/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          cache-from: type=registry,ref=${{ env.IMAGE_REPO }}:${{ github.ref_name }}-${{ matrix.dir }}
+          cache-to: type=inline
           tags: ${{ env.IMAGE_REPO }}:${{ github.ref_name }}-${{ matrix.dir }}
 
   finalize:
