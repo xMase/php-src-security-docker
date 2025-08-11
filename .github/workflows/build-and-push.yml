@@ -16,14 +16,21 @@ jobs:
       UPSTREAM_REPO: remicollet/php-src-security
     steps:
       - name: Checkout this repository
-        uses: actions/checkout@v4
-
-      - name: Get branch name
-        id: get_branch
+      - name: Build and push images for each directory
         run: |
-          echo "branch_name=${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
-
-      - name: Fetch latest upstream commit hash
+          for dir in apache cli fpm zts; do
+            if [ -f "$dir/Dockerfile" ]; then
+              echo "Building $dir..."
+              docker buildx build \
+                --file "$dir/Dockerfile" \
+                --platform linux/amd64,linux/arm64 \
+                --push \
+                --tag "${{ secrets.DOCKER_USERNAME }}/php-src-security-docker:${{ steps.get_branch.outputs.branch_name }}-$dir" \
+                "$dir"
+            else
+              echo "Skipping $dir (no Dockerfile)"
+            fi
+          done
         id: upstream
         run: |
           git ls-remote https://github.com/${{ env.UPSTREAM_REPO }} ${{ steps.get_branch.outputs.branch_name }} | awk '{print $1}' > upstream_commit.txt
