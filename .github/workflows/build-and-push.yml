@@ -122,7 +122,7 @@ jobs:
 
   finalize:
     needs: [prepare, build]
-    if: needs.prepare.outputs.skip_build != 'true' && github.event_name == 'schedule'
+    if: needs.prepare.outputs.skip_build != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -141,4 +141,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git add .last_upstream_commit
           git commit -m "chore(ci): update last upstream commit to ${{ needs.prepare.outputs.commit_hash }}" || true
+          git pull --rebase
           git push
