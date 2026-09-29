@@ -9,7 +9,8 @@ FROM debian:bullseye-slim
 # Debian bullseye LTS ended in Aug 2026 (bullseye-security no longer serves packages).
 # Freexian ELTS provides public security patches; PHP 7.4 needs OpenSSL 1.1, and bookworm only has OpenSSL 3.
 # NOTE: this apt configuration is inherited by images built FROM this one.
-ADD https://deb.freexian.com/extended-lts/archive-key.gpg /usr/share/keyrings/freexian-archive-extended-lts.gpg
+# Vendored key, sha256 a0b22152fdf1942f49cc1559ec4598bae8d8954da9ed38662d15b97a60909db8 (verified against the Freexian ELTS "how to use" docs)
+COPY freexian-archive-extended-lts.gpg /usr/share/keyrings/freexian-archive-extended-lts.gpg
 RUN set -eux; \
     chmod 644 /usr/share/keyrings/freexian-archive-extended-lts.gpg; \
     sed -i '/debian-security/d' /etc/apt/sources.list; \
