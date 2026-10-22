@@ -72,7 +72,9 @@ ENV GPG_KEYS 42670A7FE4D0441C8E4632349E4FDC074A4EF02D 5A52880781F755608BF815FC91
 
 ENV PHP_VERSION 7.4-security-backports
 # ENV PHP_VERSION 7.4.33
-ENV PHP_URL="https://github.com/remicollet/php-src-security/archive/refs/heads/PHP-7.4-security-backports.tar.gz" 
+# Pinned commit changes the ENV (and thus the RUN cache key) on each upstream commit; a fixed branch URL would reuse stale cached sources.
+ARG UPSTREAM_COMMIT=PHP-7.4-security-backports
+ENV PHP_URL="https://github.com/remicollet/php-src-security/archive/${UPSTREAM_COMMIT}.tar.gz"
 # ENV PHP_URL="https://www.php.net/distributions/php-7.4.33.tar.xz" 
 # ENV PHP_ASC_URL="https://www.php.net/distributions/php-7.4.33.tar.xz.asc"
 # ENV PHP_SHA256="924846abf93bc613815c55dd3f5809377813ac62a9ec4eb3778675b82a27b927"

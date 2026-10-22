@@ -137,6 +137,8 @@ jobs:
           context: ${{ matrix.dir }}
           file: ${{ matrix.dir }}/Dockerfile
           platforms: ${{ matrix.platform }}
+          # "none" (upstream branch missing) makes the tarball URL 404 and curl -f fails the build clearly.
+          build-args: UPSTREAM_COMMIT=${{ needs.prepare.outputs.commit_hash }}
           cache-from: type=gha,scope=${{ matrix.dir }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.dir }}-${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_REPO }},push-by-digest=true,name-canonical=true,push=true
