@@ -7,7 +7,14 @@ on:
   schedule:
     # Runs every 6 hours
     - cron: "0 */6 * * *"
+    # Weekly forced build without cache, to pick up Debian security updates
+    - cron: "0 2 * * 0"
   workflow_dispatch:
+    inputs:
+      no_cache:
+        description: "Build without cache"
+        type: boolean
+        default: false
 
 concurrency:
   group: build-and-push-${{ github.ref_name }}
@@ -22,6 +29,7 @@ jobs:
       skip_build: ${{ steps.compare.outputs.skip_build }}
       dirs: ${{ steps.scan_dirs.outputs.dirs }}
       commit_hash: ${{ steps.upstream.outputs.commit_hash }}
+      no_cache: ${{ steps.compare.outputs.no_cache }}
     env:
       UPSTREAM_REPO: remicollet/php-src-security
     steps:
@@ -57,7 +65,12 @@ jobs:
           UPSTREAM_COMMIT=$(cat upstream_commit.txt)
           echo "last_commit=$LAST_COMMIT" >> "$GITHUB_OUTPUT"
           echo "upstream_commit=$UPSTREAM_COMMIT" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "$LAST_COMMIT" = "$UPSTREAM_COMMIT" ]; then
+          NO_CACHE=false
+          if [ "${{ github.event.schedule }}" = "0 2 * * 0" ] || [ "${{ inputs.no_cache }}" = "true" ]; then
+            NO_CACHE=true
+          fi
+          echo "no_cache=$NO_CACHE" >> "$GITHUB_OUTPUT"
+          if [ "$NO_CACHE" = "false" ] && [ "${{ github.event_name }}" = "schedule" ] && [ "$LAST_COMMIT" = "$UPSTREAM_COMMIT" ]; then
             echo "skip_build=true" >> "$GITHUB_OUTPUT"
             echo "No upstream changes detected; skipping build for scheduled run."
           else
@@ -139,6 +152,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           # "none" (upstream branch missing) makes the tarball URL 404 and curl -f fails the build clearly.
           build-args: UPSTREAM_COMMIT=${{ needs.prepare.outputs.commit_hash }}
+          no-cache: ${{ needs.prepare.outputs.no_cache == 'true' }}
           cache-from: type=gha,scope=${{ matrix.dir }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.dir }}-${{ matrix.arch }}
           outputs: type=image,name=${{ env.IMAGE_REPO }},push-by-digest=true,name-canonical=true,push=true
